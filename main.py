@@ -4,9 +4,9 @@ import numpy as np
 import random
 from scipy.spatial import cKDTree
 # only constants needed to define our cell
-a = 3.573211
+a = 3.567
 # one million atoms is 50x50x50
-s = 20
+s = 50
 limit = 3*s + (s-1) + 0.01
 cell = [limit, limit, limit]
 # really don't know where to put this
@@ -22,11 +22,6 @@ N = 100000
 max_time = 3600
 num_vacancies = 5
 num_interstitials = 5
-
-def cap(num, bottom, top):
-    
-    return min(num, top)
-    
 
 class defect:
     def __init__(self, type, coords=None, mobile=True):
@@ -47,7 +42,7 @@ class defect:
 
     def gen_coords(s):
         """
-        Generates randomly coordinates for a defect according to size of cell, s
+        Generates random coordinates for a defect according to size of cell, s
         """
         coords = np.array([(random.randrange(0, 4 * s, 2)) for _ in range(3)])
         if sum(coords) % 4 != 0:
@@ -65,6 +60,7 @@ class defect:
                    self.coords[i] = 0
                 else:
                     self.coords[i] = 1 
+
             if self.coords[i] < 0:
                 if self.coords[i] % 2 == 0:
                     self.coords[i] = limit - 1
