@@ -1,6 +1,6 @@
 ##### SOME TRUTHS
 # Vacancy clusters cannot move, only the single vacancy
-# Intertitials of any type can move
+# Intertitials of any species can move
 # NVx doesn't move, but V can split off NV2 and move elsewhere
 # Ns doesn't move and only has one size
 from itertools import permutations
@@ -17,7 +17,7 @@ kB = 8.6173303e-5
 T = 800
 kBT = kB * T
 
-# really the rate should be inherently linked to the type?
+# really the rate should be inherently linked to the species?
 # also need a strain field component
 # EITHER IT DISSOCIATES OR IT MIGRATES OR IT DOES NOTHING (Ns)
 diffusion_dict = {'V': nu * np.exp(-2.3/kBT), 'I': nu * np.exp(-1.8/kBT)}
@@ -25,9 +25,10 @@ moves_even = [[1, 1, 1], [-1, 1, -1], [-1, -1, 1], [1, -1, -1]] # if on a neg si
 moves_odd = [[-1, -1, -1], [1, -1, 1], [1, 1, -1], [-1, 1, 1]] 
 
 class defect:
-    def __init__(self, type, pos, size = 1):
-        assert type in ['V', 'I', 'Ns', 'NVx'], "Defect must be of valid type" 
-        self.type = type
+    def __init__(self, species, pos, size = 1):
+        assert species in ['V', 'I', 'Ns', 'NVx'], "Defect must be of valid species" 
+        assert type(pos) == list or type(pos) == type(np.array(0)), "Defect must be a list or numpy array"
+        self.species = species
         self.pos = pos
         self.migration = 0
         self.dissociation = 0
@@ -35,40 +36,44 @@ class defect:
         # self.maxsize = 4 # to stop things growing forever
         if size == 1:
             try:
-                self.migration = diffusion_dict[self.type]
+                self.migration = diffusion_dict[self.species]
             except:
                 0 # just because it's required
 
         # can also just go in a dictionary?
-        if 4 > size > 1 and type == 'V':    
+        if 4 > size > 1 and species == 'V':    
             self.dissociation = 2e-6
-        if size > 2 and type == 'NVx':
+        if size > 2 and species == 'NVx':
             self.dissociation = 3e-6
         
     def __str__(self):
-        return f"type: {self.type}, pos: {self.pos}, migration: {self.migration}, dissociation: {self.dissociation}"
+        return f"species: {self.species}, pos: {self.pos}, migration: {self.migration}, dissociation: {self.dissociation}"
     
     def move(self, vec):
         """
         Just moves the atom in the prescribed direction, 
         I think choosing where to move it should be its own function
         """
-        self.pos += vec
-        limit = s / 4 * a
-        for i in range(len(self.pos)):
-            if self.pos[i] > limit:
-                if self.pos[i] % 2 == 0:
-                    self.pos[i] = 0
-                else:
-                    self.pos[i] = 1
-
-            if self.pos[i] < 0:
-                if self.pos[i] % 2 == 0:
-                    self.pos[i] = limit - 1
-                else:
-                    self.pos[i] = limit
-
+        self.pos = self.wrap(self.pos + vec)
         return self.pos.copy()
+
+    def wrap(self, pos):
+        limit = s / 4 * a
+        for i in range(len(pos)):
+            if pos[i] > limit:
+                if pos[i] % 2 == 0:
+                    pos[i] = 0
+                else:
+                    pos[i] = 1
+
+            if pos[i] < 0:
+                if pos[i] % 2 == 0:
+                    pos[i] = limit - 1
+                else:
+                    pos[i] = limit
+        return pos 
+
+        
 
     def get_pos(self):
         return self.pos.copy()
@@ -86,7 +91,7 @@ class defect:
         return [query[0][0][1], query[1][0][1]]
 
 def gauss():
-        r = np.random.normal(s/2, 6, 1)[0]
+        r = np.random.normal(s/2, 4, 1)[0]
         return 2 * round(r / 2)
 
 def gen_pos(func): 
@@ -99,7 +104,7 @@ def gen_pos(func):
 
 class defect_list:
     """
-    List which contains every defect, make sure to do some type checking that everything is a defect
+    List which contains every defect, make sure to do some species checking that everything is a defect
     """
     def __init__(self, defects):
         self.defects = defects 
@@ -141,7 +146,7 @@ class defect_list:
         atoms.cell[1][1] = s/4 * a 
         atoms.cell[2][2] = s/4 * a 
         for defect in self.defects:
-            if defect.type == 'V':
+            if defect.species == 'V':
                 if defect.size == 1:
                     # could get this as a pointer instead and then update things quicker?
                     d = Atoms(f'C', [defect.get_pos()])
@@ -166,6 +171,7 @@ class defect_list:
         i = query[1][0][1]
         # if it's closer than 3 then it has basically been captured (if applicable)
         if d < 3:
+            # index is the mobile one, so it should do all the moving
             self.combine(index, i)
         return [d, i]
 
@@ -176,7 +182,7 @@ class defect_list:
         i = min(k, l)
         j = max(k, l)
         print("AAAAAAAAAah, I'm combining")
-        pair = set((self.defects[j].type, self.defects[i].type))
+        pair = set((self.defects[j].species, self.defects[i].species))
         if pair == set(('V', 'V')):
             # for now position can just be the old one, but will need to be updated to be physical
             new = defect('V', self.defects[i].get_pos(), size=self.defects[i].size + self.defects[j].size)
@@ -191,14 +197,16 @@ class defect_list:
 # build kdtree and check if it's near anything to recombine (one function)
 #  
 
-defects = defect_list([defect('V', gen_pos(gauss)), defect('V', gen_pos(gauss))])
+defects = defect_list([defect('V', gen_pos(gauss))])
+print(defects[0].get_pos())
+quit()
 for _ in range(10):
     defects.append(defect('V', gen_pos(gauss)))
 arr = [] 
 
 #while len(defects) > 5:
 i = 0
-while len(defects) > 5 and i < 2000:
+while len(defects) > 0 and i < 2000:
     i += 1
     arr.append(defects.atoms())
     j = np.random.choice(range(len(defects)), p=defects.get_migrations()/sum(defects.get_migrations()))
