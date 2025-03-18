@@ -10,7 +10,7 @@ from ase.io import read, write
 from scipy.spatial import cKDTree
 import random
 from ase.spacegroup import crystal 
-s = 400 # not too sure what this number actually is 
+s = 1000 # not too sure what this number actually is 
 a = 3.567 
 nu = 40e12
 kB = 8.6173303e-5
@@ -20,13 +20,12 @@ kBT = kB * T
 # really the rate should be inherently linked to the species?
 # also need a strain field component
 # EITHER IT DISSOCIATES OR IT MIGRATES OR IT DOES NOTHING (Ns)
-# these are the base rates, will need to be modified for strain fields
 diffusion_dict = {'V': nu * np.exp(-2.3/kBT), 'I': nu * np.exp(-1.8/kBT)}
-moves_even = [[1, 1, 1], [-1, 1, -1], [-1, -1, 1], [1, -1, -1]] # if on an odd site then we can only move the neg version of these
+moves_even = [[1, 1, 1], [-1, 1, -1], [-1, -1, 1], [1, -1, -1]] # if on a neg site then we can only move the neg version of these
 moves_odd = [[-1, -1, -1], [1, -1, 1], [1, 1, -1], [-1, 1, 1]] 
 
 class defect:
-    def __init__(self, species, pos, pairs=[]):
+    def __init__(self, species, pos, pairs = []):
         assert species in ['V', 'I', 'Ns', 'NVx'], "Defect must be of valid species" 
         assert type(pos) == list or type(pos) == type(np.array(0)), "Defect must be a list or numpy array"
         self.species = species
@@ -34,10 +33,7 @@ class defect:
         self.migration = 0
         self.dissociation = 0
         self.pairs = pairs
-        if len(pairs) == 0:
-            self.size = 1
-        else:
-            self.size = len(pairs)
+        self.size = len(pairs) + 1
         # self.maxsize = 4 # to stop things growing forever
         if self.size == 1:
             try:
@@ -46,32 +42,23 @@ class defect:
                 self.migration = 0 
 
         # can also just go in a dictionary?
-        if self.size > 2 and self.species == 'V':    
-            # random small number
-            self.migration = 0
-            self.dissociation = 0.0001
+        if 4 > self.size > 1 and self.species == 'V':    
+            self.dissociation = 0.1
         if self.size > 2 and self.species == 'NVx':
             self.dissociation = 3e-6
         
     def update(self):
-        self.size = len(self.pairs)
-        print("size", self.size)
-        if self.size == 0:
-            print("WHAT THE FUCK IS GOING ON")
-            quit()
+        self.size = len(self.pairs) + 1
         if self.size == 1:
             try:
                 self.migration = diffusion_dict[self.species]
-                self.dissociation = 0
             except:
                 self.migration = 0
-                self.dissociation = 0
 
         # can also just go in a dictionary?
-        if  self.size >= 2 and self.species == 'V':    
-            print("does this ever happen?")
+        if self.size > 1 and self.species == 'V':    
             self.migration = 0
-            self.dissociation = 0.0001
+            self.dissociation = 2e-6
         if self.size > 2 and self.species == 'NVx':
             self.migration = 0
             self.dissociation = 3e-6
@@ -103,7 +90,8 @@ class defect:
                 else:
                     pos[i] = limit
         return pos 
- 
+
+        
 
     def get_pos(self):
         return self.pos.copy()
@@ -121,7 +109,7 @@ class defect:
         return [query[0][0][1], query[1][0][1]]
 
 def gauss():
-        r = np.random.normal(s/2, 6, 1)[0]
+        r = np.random.normal(s/2, 35, 1)[0]
         return 2 * round(r / 2)
 
 def gen_pos(func): 
@@ -132,24 +120,12 @@ def gen_pos(func):
     pos += random.choice([np.array([0, 0, 0]), np.array([1, 1, 1])])
     return pos
 
-def round_to_nearest_site(pos):
-    for i in range(len(pos)):
-       pos[i] = round(pos[i]) 
-    if sum(pos) % 4 != 0:
-    # might have a slight bias for the pos direction
-        pos[random.randint(0, 2)] += 2
-    pos += random.choice([np.array([0, 0, 0]), np.array([1, 1, 1])])
-    return pos  
-
 class defect_list:
     """
     List which contains every defect, make sure to do some species checking that everything is a defect
     """
     def __init__(self, defects):
         self.defects = defects 
-        for i in range(len(self.defects)):
-            self.defects[i].pairs = [i]
-            
 
     def __getitem__(self, indices):
         return self.defects[indices] 
@@ -173,7 +149,7 @@ class defect_list:
     def get_dissociations(self):
         arr = []
         for defect in self.defects:
-            arr.append(defect.dissociation)
+            arr.append(defect.migration)
         return arr
 
     def append(self, appendix):
@@ -188,7 +164,6 @@ class defect_list:
         atoms.cell[1][1] = s/4 * a 
         atoms.cell[2][2] = s/4 * a 
         for defect in self.defects:
-            #print(defect.size)
             if defect.species == 'V':
                 if defect.size == 1:
                     # could get this as a pointer instead and then update things quicker?
@@ -232,33 +207,11 @@ class defect_list:
         
 
         if pair == set(('V', 'V')):
-            print("COMBINING")
-            print("i", self.defects[i].pairs)
-            print("j", self.defects[j].pairs)
-            self.defects[i].pairs = self.defects[j].pairs # they share the same place in memory
+            self.defects[i].pairs.append(j)
+            self.defects[i].update()
             self.defects[j].pairs.append(i)
-            self.defects[i].update()
             self.defects[j].update()
-            print("i updated", self.defects[i].pairs)
-            print("j updated", self.defects[j].pairs)
 
-
-    def dissociate(self, i):
-        # has to be a defects func and not a defect func as it needs to know the list that it is in
-        print("AAAAAaah I'm dissociating!")
-        pairs = self.defects[i].pairs.copy()
-        print(i, "is dissociating")
-        print("all the pairs are ", pairs)
-        print("j pairs", self.defects[j].pairs)
-        self.defects[j].pairs.remove(i)
-        print("j pairs", self.defects[j].pairs)
-        self.defects[i].pairs = [i]
-        print("j pairs", self.defects[j].pairs)
-        # make this random or something
-        self.defects[i].pos = self.defects[i].pos + random.choice([[-3, -3, -3], [3, -3, 3], [3, 3, -3], [-3, 3, 3]]) 
-        for i in pairs:
-            self.defects[i].update()
-        # needs to move away from its nearest neighbour in plane
 
 # initialise system
 # move defect by one 
@@ -266,29 +219,22 @@ class defect_list:
 #  
 
 defects = defect_list([defect('V', gen_pos(gauss))])
-for i in range(20):
-    defects.append(defect('V', gen_pos(gauss), pairs=[i+1]))
+for _ in range(200):
+    defects.append(defect('V', gen_pos(gauss)))
 arr = [] 
 
 #while len(defects) > 5:
 i = 0
-while i < 2000:
-    if i % 1 == 0:
+p = 10
+while i < 400000:
+    if i % 100 == 0:
         #print(i)
         arr.append(defects.atoms())
     if i % 1000 == 0:
-        #print(i)
-        0
-    total = sum(defects.get_migrations()) + sum(defects.get_dissociations())
-    print(sum(defects.get_migrations()), sum(defects.get_dissociations()))
-    if random.random() * total < sum(defects.get_migrations()):
-        j = np.random.choice(range(len(defects)), p=defects.get_migrations()/sum(defects.get_migrations()))
-        defects[j].random_walk()
-        defects.check_neighbours(j)
-    else:
-        j = np.random.choice(range(len(defects)), p=np.array(defects.get_dissociations())/sum(defects.get_dissociations()))
-        defects.dissociate(j)
-
+        print(i)
+    j = np.random.choice(range(len(defects)), p=defects.get_migrations()/sum(defects.get_migrations()))
+    defects[j].random_walk()
+    defects.check_neighbours(j)
     i += 1
     
 arr.append(defects.atoms())
