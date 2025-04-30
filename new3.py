@@ -44,7 +44,7 @@ class Defect:
             self.pos = minus(self.pos, vec)
             self.lattice.add_defect(self)
 
-    def get_neighbours(self, radius=3):
+    def get_neighbours_old(self, radius=3):
         x, y, z = self.pos
         neighbours = []
         for dx in range(-radius, radius+1):
@@ -55,6 +55,35 @@ class Defect:
                     neighbour_pos = (x+dx, y+dy, z+dz)
                     if neighbour_pos in self.lattice.defects:
                         neighbours.append(self.lattice.defects[neighbour_pos])
+        return neighbours
+
+    def get_nearest_neighbour(self, radius=3):
+        x, y, z = self.pos
+        neighbours = []
+        for dx in range(-radius, radius+1):
+            for dy in range(-radius, radius+1):
+                for dz in range(-radius, radius+1):
+                    if dx == dy == dz == 0:
+                        continue
+                    neighbour_pos = (x+dx, y+dy, z+dz)
+                    if neighbour_pos in self.lattice.defects:
+                        neighbours.append([self.lattice.defects[neighbour_pos], np.linalg.norm([dx, dy, dz])])
+        if len(neighbours) > 0:
+            argmin = np.argmin(np.array(neighbours).T[1])
+            neighbours = neighbours[argmin]
+        return neighbours
+
+    def get_neighbours(self, radius=3):
+        x, y, z = self.pos
+        neighbours = []
+        for dx in range(-radius, radius+1):
+            for dy in range(-radius, radius+1):
+                for dz in range(-radius, radius+1):
+                    if dx == dy == dz == 0:
+                        continue
+                    neighbour_pos = (x+dx, y+dy, z+dz)
+                    if neighbour_pos in self.lattice.defects:
+                        neighbours.append([self.lattice.defects[neighbour_pos], np.linalg.norm([dx, dy, dz])])
         return neighbours
     
     def wrap(self):
@@ -82,8 +111,8 @@ class Vacancy(Defect):
         self.rate = 40e12 * np.exp(-2.3/(kB*T))
         self.species = 'C'
 
-    def vacancy_merge(self):
-        neighbours = self.get_neighbours(radius=3)
+    def vacancy_merge_old(self):
+        neighbours = self.get_nearest_neighbour(radius=3) # this will only return the closest neighbour in the radius
         pos = self.pos
         if len(neighbours) > 1:
             print("WE HAVE MANY NEIGHBOURS")
@@ -95,8 +124,27 @@ class Vacancy(Defect):
                 self.lattice.add_defect(VacancyCluster(pos)) 
             elif type(neighbours[0]) == Nitrogen or type(neighbours[0]) == NitrogenVacancy:
                 self.lattice.add_defect(NitrogenVacancy(pos)) 
+    
+    def vacancy_merge(self):
+        neighbour = self.get_nearest_neighbour(radius=10) # returns (defect, d)
+        pos = self.pos
+        if len(neighbour) > 0: # could also do if neighbour != []
+            neighbour, d = neighbour
+            #neigh_pos = neighbour.pos
+            self.lattice.remove_defect(pos)
+            if type(neighbour) == Vacancy or type(neighbour) == VacancyCluster and d <= 3:
+                self.lattice.remove_defect(neighbour.pos)
+                self.lattice.add_defect(VacancyCluster(pos))
+            elif type(neighbour) == Nitrogen and d <= 10: 
+                #self.lattice.remove_defect(neighbour.pos)
+                #self.lattice.add_defect(NitrogenVacancy(neigh_pos))
+                neighbour.form_NV(self)
+            else:
+                self.lattice.add_defect(Vacancy(pos))
 
-
+    def atoms(self):
+        return ('C', [self.pos])
+            
 
 class VacancyCluster(Defect):
     def __init__(self, pos, lattice=None): 
@@ -106,6 +154,10 @@ class VacancyCluster(Defect):
             self.lattice.add_defect(self)
         self.rate = 0
         self.species = 'O'
+    
+    def atoms(self):
+        return ('B', [self.pos])
+            
 
 class Divacancy(Vacancy):
     # for the divacancy it will need two positions, and a vector for which 100 plane it's pointing in -> vacancy chain will have the same but many positions
@@ -125,15 +177,55 @@ class Nitrogen(Defect):
         self.rate = 0
         self.species = 'N'
 
+    def form_NV(self, V):
+        # this only merges, does not distance checking or anything
+        possible_V = [add(self.pos, self.available_moves()[i]) for i in range(4)]
+        #print(np.linalg.norm(np.array(V.pos) - possible_V, axis=1) )
+        argmin = np.argmin(np.linalg.norm(np.array(V.pos) - possible_V, axis=1))
+        V_pos = tuple(possible_V[argmin])
+        #self.lattice.remove_defect(V.pos)
+        #print(V.pos)
+        self.lattice.remove_defect(self.pos)
+        self.lattice.add_defect(NitrogenVacancy(self.pos, V_pos))
+    
+    def atoms(self):
+        return ('N', [self.pos])
+
 class NitrogenVacancy(Defect):
-    def __init__(self, pos, lattice=None): 
-        self.pos = tuple(pos)
+    def __init__(self, pos_N, pos_V, lattice=None): 
+        self.pos_N = pos_N
+        self.pos_V = pos_V
         self.lattice = lattice
         if lattice != None:
             self.lattice.add_defect(self)
         self.rate = 0
-        self.species = 'B'
-        
+        self.species = 'B' # redundant
+
+    def atoms(self):
+        return ('OC', [self.pos_N, self.pos_V])
+
+    def __repr__(self):
+        return f"{self.__class__.__name__} {"N", self.pos_N, "V", self.pos_V}"
+
+
+
+class NV2(Defect):
+    ### BEFORE WE IMPLEMENT THIS IT'S PROBABLY WORTH IMPLEMENTING RATE BIASING VECTORS FOR NITROGEN 
+    def __init__(self, pos_N, pos_V1, pos_V2, lattice=None): 
+        self.pos_N = pos_N
+        self.pos_V = pos_V1
+        self.lattice = lattice
+        if lattice != None:
+            self.lattice.add_defect(self)
+        self.rate = 0
+        self.dissociation = 40e12 * np.exp(-1.8/(kB*T))
+
+    def atoms(self):
+        return ('OC', [self.pos_N, self.pos_V])
+
+    def __repr__(self):
+        return f"{self.__class__.__name__} {"N", self.pos_N, "V", self.pos_V1, "V", self.pos_V2}"
+
 
 class Lattice():
     """
@@ -155,7 +247,20 @@ class Lattice():
 
     def add_defect(self, defect):
         # currently this both initialises defects *and* is responsible for adding them after moving, should maybe turn into two separate functions
-        if defect != type(Divacancy):
+
+        if type(defect) == NitrogenVacancy:
+
+            #TODO: 
+            # make sure that the N and V are actually neighbouring each other
+
+            # I think the idea is that we already know that both the nitrogen and the vacancy are valid, otherwise they wouldn't be able to be on the lattice
+            # therefore there's probably no point in checking again :)
+            self.defects[defect.pos_N] = defect
+            self.defects[defect.pos_N].lattice = self
+            self.defects[defect.pos_V] = defect
+            self.defects[defect.pos_V].lattice = self
+
+        if type(defect) != Divacancy and type(defect) != NitrogenVacancy:
             try:
                 print(f"A defect already exists on site {self.defects[defect.pos]}")
             except:
@@ -164,12 +269,6 @@ class Lattice():
                     self.defects[defect.pos] = defect
                     self.defects[defect.pos].lattice = self
 
-                # actually may be worth making one giant array with every valid position in it and then comparing against that -> may be faster
-
-                # I know that this looks stupid but it's much faster than if any(a) < 0:
-                #if lattice.box[0]-1 < defect.pos[0] < 0 or lattice.box[1]-1 < defect.pos[1] < 0 or lattice.box[2]-1 < defect.pos[2] < 0:
-                    # do something special if we care about hitting the boundary.
-                
                 # wrap first then check if we're cute and valid    
                 defect.wrap()
                 # checks if the position is *valid* i.e. could exist in an infinite diamond lattice
@@ -186,13 +285,14 @@ class Lattice():
                     print(f"Not a valid position: {defect.pos}")
                     return 1
 
+
     def remove_defect(self, pos):
         try:
             del self.defects[tuple(pos)]
         except:
             print(f"No defect exists at site {pos}")
 
-    def write_atoms(self):
+    def write_atoms_old(self):
         spec = ''
         pos = []
         for defect in list(self.defects.values()):
@@ -201,6 +301,17 @@ class Lattice():
         atoms = Atoms(spec, pos, cell=self.box)
 
         #atoms.cell = self.box  
+        write('output.extxyz', atoms, append=True)
+
+    def write_atoms(self):
+        spec = ''
+        pos = []
+        for defect in list(self.defects.values()):
+            atoms = defect.atoms()
+            spec += atoms[0]
+            pos.extend(atoms[1])
+
+        atoms = Atoms(spec, pos, cell=self.box)
         write('output.extxyz', atoms, append=True)
 
     def choose_defect(self):
@@ -215,26 +326,13 @@ class Lattice():
         self.time += 1/tot_rate * np.log(1/np.random.uniform())
         return np.random.choice(list(self.defects.values()), 1, p=rates)[0]
 
-    def random_pos(self):
-        even_numbers = np.arange(0, self.box[0], 2) 
-        valid_combinations = []
-
-        for x in even_numbers:
-                for y in even_numbers:
-                        for z in even_numbers:
-                                if (x + y + z) % 4 == 0:   
-                                        valid_combinations.append([int(x), int(y), int(z)])
-        odds = []
-        for combo in valid_combinations:
-            odds.append([combo[i] + 1 for i in range(3)])
-        print(tuple(random.choice(valid_combinations)))
-        return tuple(random.choice(valid_combinations))
-    
     def get_grid(self):
         """Returns a basically unordered array of every valid grid point.
-            This gets prohibitively expensive for anything above 512 basically."""
+            This is just stupidly expensive for anything decently sized.
+            Leaving it here so we remember NOT to do this again."""
         valid_combinations = []
 
+        # there must be a pattern that you could use to strike off invalid positions much faster
         for x in np.arange(0, self.box[0], 2) :
                 for y in np.arange(0, self.box[1], 2) :
                         for z in np.arange(0, self.box[2], 2) :
@@ -262,36 +360,39 @@ class Lattice():
                 num += 1
         return num
 
+def ppm_to_num(ppm, lattice):
+    return round(ppm * np.prod(lattice.box) / 80e6)
         
 ###### SIMULATION PARAMETERS
-T = 1100
+T = 1100 # in K
 num_steps = int(1e5)
-N_ppm = 40 
-V_ppm = 10
-
+N_ppm = 160
+V_ppm = 40
 
 #64 is just over 5nm -> 7.1074 / 8 * 64 * 10e-10
-lattice = Lattice([1024, 1024, 1024])
+lattice = Lattice([1024, 1024, 1024]) # the scaling factor is 1 = 0.88425 Ansgtroms -> 4 = a
+#lattice = Lattice([64, 64, 64]) # the scaling factor is 1 = 0.88425 Ansgtroms -> 4 = a
 #Vacancy((20, 20, 20), lattice)
 #lattice.add_defect(Vacancy([0, 0, 0]))
 print("INITIALISING SYSTEM")
 
-V_num = round(V_ppm * np.prod(lattice.box) / 80e6)
-print(V_num)
-for i in range(V_num):
+#Vacancy([0, 0, 4], lattice)
+#lattice.add_defect(Nitrogen([40, 40, 40]))
+#lattice.write_atoms()
+#lattice.defects[40, 40, 40].form_NV(lattice.defects[0, 0, 4])
+
+for i in range(ppm_to_num(V_ppm, lattice)):
     lattice.add_defect(Vacancy(lattice.random_gaussian_pos()))
 
-N_num = round(N_ppm * np.prod(lattice.box) / 80e6)
-for _ in range(N_num):
+for _ in range(ppm_to_num(N_ppm, lattice)):
     lattice.add_defect(Nitrogen(lattice.random_uniform_pos()))
 
 for i in range(num_steps):
     defect = lattice.choose_defect()
-    #defect = list(lattice.defects.values())[0]
     defect.move_by(random.choice(defect.available_moves()))
     defect.vacancy_merge()
     if i % 100 == 0:
-        print("Iteration:", f"{i}/{num_steps}", "Time:", lattice.time, "seconds", "V:", lattice.get_num_type(Vacancy), "NV:", lattice.get_num_type(NitrogenVacancy), "Vn:", lattice.get_num_type(VacancyCluster))
+        print("Iteration:", f"{i}/{num_steps}", "Time:", lattice.time, "seconds", "V:", lattice.get_num_type(Vacancy), "NV:", lattice.get_num_type(NitrogenVacancy)/2, "Vn:", lattice.get_num_type(VacancyCluster))
         lattice.write_atoms()
 
 print("Total simulation time:", lattice.time, "seconds")
